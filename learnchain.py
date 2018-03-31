@@ -3,11 +3,53 @@ import json
 import hashlib
 from uuid import uuid4
 from flask import Flask, jsonify, request
+import requests
+
+from urlparse import urlparse
 class Learnchain:
     def __init__(self):
         self.chain=[]
         self.transactions=[]
         self.genesis_block=self.new_block(proof=100,previous_hash=1)
+        self.nodes=set()
+
+    def add_node(self,address):
+        self.nodes.add(urlparse(address).netloc) #to removes http 
+
+    def valid_chain(self,chain):
+        last_block=chain[0]
+        indx=1
+        while(indx<len(chain)):
+            block=chain[indx]
+
+            if(block['previous_hash']!=self.hash(last_block)):
+                return False
+            if(not self.valid_proof(last_block['proof'],block['proof'])):
+                return False
+            last_block=block
+            indx+=1
+        print 'Returning true'
+        return True
+
+    def resolve_conflicts(self):
+        maxlen=len(self.chain)
+        new_chain=None
+        for node in self.nodes:
+            response=requests.get('http://%s/chain'%(node))
+
+            if(response.status_code==200):
+                length=response.json()['length']
+                chain=response.json()['chain']
+                print length 
+                if(length>maxlen and self.valid_chain(chain)):
+                    new_chain=chain
+                    maxlen=length
+        if(new_chain is not None):
+            self.chain=new_chain
+            return True
+        else:
+            return False
+
 
     def new_block(self,proof,previous_hash=None):
         #makes a new block and returns it after appending to chain
@@ -101,14 +143,39 @@ def full_cahin():
     }
     return jsonify(response), 200
 
+@app.route("/node/register",methods=['POST'])
+def register_nodes():
+    values=request.get_json()
+
+    nodes=values['nodes']
+    if nodes is None:
+        return "Error : Invalid list of nodes",400
+
+    for node in nodes:
+        blockchain.add_node(node)
+
+    response={
+        'message': 'New node has been added',
+        'available_nodes': list(blockchain.nodes)
+    }
+
+    return jsonify(response),201
+
+@app.route('/node/resolve',methods=['GET'])
+def consensus():
+    replaced=blockchain.resolve_conflicts()
+    if replaced:
+        response={
+        'message':'Chain has been replaced',
+        'chain': blockchain.chain
+        }
+    else:
+        response={
+        'message':'This chain is authoritative',
+        'chain':blockchain.chain
+        }
+    return jsonify(response),200
+
 if __name__ == '__main__':
+    # app.run(host='0.0.0.0',port=5001)
     app.run(host='0.0.0.0', port=5000)
-
-
-
-
-
-
-
-
-
